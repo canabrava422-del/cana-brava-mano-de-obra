@@ -357,7 +357,23 @@
 </head>
 <body>
 
-<div id="appRoot">
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <img class="login-logo" id="loginLogo" src="" alt="Caña Brava">
+    <h1>Reporte Gerencial de Mano de Obra</h1>
+    <p class="login-sub">Ingresa con tu usuario para ver el dashboard.</p>
+    <form id="loginForm">
+      <label class="login-label" for="loginUsername">Usuario</label>
+      <input class="login-input" type="text" id="loginUsername" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      <label class="login-label" for="loginPassword">Contraseña</label>
+      <input class="login-input" type="password" id="loginPassword" autocomplete="current-password" required>
+      <button class="btn btn-primary login-btn" type="submit" id="loginBtn">Ingresar</button>
+      <p class="login-error" id="loginError"></p>
+    </form>
+  </div>
+</div>
+
+<div id="appRoot" style="display:none;">
 
 <header class="top">
   <div class="top-inner">
@@ -370,6 +386,11 @@
     <div class="top-meta">
       <div class="file-chip"><span class="dot"></span><span id="fileChipText">Sin datos cargados</span></div>
       <span id="lastUpdate"></span>
+      <div class="user-chip">
+        <span id="userRoleBadge" class="role-badge"></span>
+        <span id="userEmailText"></span>
+        <button id="logoutBtn" class="logout-btn" type="button">Salir</button>
+      </div>
     </div>
   </div>
 </header>
@@ -629,10 +650,6 @@
   const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZva3JkcmZoaHZyb2ZteWZidXFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMTA2NzQsImV4cCI6MjA5Njg4NjY3NH0.8qaG-HIbR46cB3GVFsTU9jvay8jsHcwjLsLRTKH5hDM';
   const TABLE_NAME = 'labor_rows';
   const PAGE_SIZE = 1000;
-  // Credenciales de administrador usadas internamente para poder reemplazar
-  // los datos (todavía no hay pantalla de login; se agregará después).
-  const ADMIN_USER = 'admin';
-  const ADMIN_PASS = 'reportemg';
 
   const sb = (window.supabase && typeof window.supabase.createClient === 'function')
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -670,6 +687,94 @@
     real: '#F2A900', realDeep:'#B97B00',
     terra:'#D6304A', forest:'#3A1EC0', ink:'#1B1033', inkSoft:'#5B5470', line:'#E2DDF3'
   };
+
+  /* ============================================================
+     AUTH (usuario + contraseña propios, vía funciones RPC de Supabase)
+  ============================================================ */
+  const loginScreen = document.getElementById('loginScreen');
+  const appRoot = document.getElementById('appRoot');
+  const loginForm = document.getElementById('loginForm');
+  const loginUsername = document.getElementById('loginUsername');
+  const loginPassword = document.getElementById('loginPassword');
+  const loginBtn = document.getElementById('loginBtn');
+  const loginError = document.getElementById('loginError');
+  const userRoleBadge = document.getElementById('userRoleBadge');
+  const userEmailText = document.getElementById('userEmailText');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const loginLogoImg = document.getElementById('loginLogo');
+  const brandLogoImg = document.querySelector('.brand-logo');
+  if (loginLogoImg && brandLogoImg) loginLogoImg.src = brandLogoImg.src;
+
+  // La sesión vive solo en memoria: al recargar la página hay que volver a
+  // iniciar sesión. La contraseña nunca se guarda en el navegador (ni
+  // localStorage ni cookies) — solo se mantiene mientras dura la pestaña,
+  // para poder llamar a las funciones de reemplazo de datos.
+  let currentUser = null; // { usuario, password, rol, nombre }
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    loginError.textContent = '';
+    if (!sb){
+      loginError.textContent = 'No se pudo cargar la conexión con Supabase. Recarga la página.';
+      return;
+    }
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'Ingresando…';
+    try {
+      const usuario = loginUsername.value.trim().toLowerCase();
+      const password = loginPassword.value;
+      const { data, error } = await sb.rpc('login', { p_usuario: usuario, p_password: password });
+      if (error) throw error;
+      if (!data || data.length === 0){
+        loginError.textContent = 'Usuario o contraseña incorrectos.';
+        return;
+      }
+      const row = data[0];
+      currentUser = { usuario: row.usuario, password, rol: row.rol, nombre: row.nombre };
+      await onLoginSuccess();
+    } catch (err) {
+      console.error(err);
+      loginError.textContent = 'No se pudo iniciar sesión. Intenta nuevamente.';
+    } finally {
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Ingresar';
+    }
+  });
+
+  logoutBtn.addEventListener('click', () => {
+    currentUser = null;
+    location.reload();
+  });
+
+  async function onLoginSuccess(){
+    state.role = currentUser.rol;
+    state.userEmail = currentUser.usuario;
+
+    userEmailText.textContent = currentUser.nombre || currentUser.usuario;
+    userRoleBadge.textContent = state.role === 'admin' ? 'Administrador' : 'Usuario general';
+    userRoleBadge.className = 'role-badge' + (state.role === 'admin' ? ' admin' : '');
+
+    const adminUploadWrap = document.getElementById('adminUploadWrap');
+    if (adminUploadWrap) adminUploadWrap.style.display = state.role === 'admin' ? 'block' : 'none';
+
+    updateEmptyStateCopy();
+
+    loginScreen.style.display = 'none';
+    appRoot.style.display = 'block';
+
+    await loadFromSupabase();
+  }
+
+  function updateEmptyStateCopy(){
+    const emptyStateEl = document.getElementById('emptyState');
+    if (!emptyStateEl) return;
+    const p = emptyStateEl.querySelector('p');
+    if (state.role === 'admin'){
+      p.innerHTML = 'Sube el archivo <b>base_de_datos_mano_de_obra.xlsx</b> para generar automáticamente los indicadores, comparativos PB / PY / Real y el detalle por EQ‑TR. Cada vez que reemplaces el archivo, se sustituye por completo la información anterior.';
+    } else {
+      p.textContent = 'El administrador todavía no ha cargado información. Vuelve a intentarlo más tarde.';
+    }
+  }
 
   /* ============================================================
      FILE HANDLING
@@ -824,9 +929,12 @@
   }
 
   async function replaceDataInSupabase(rows, onProgress){
+    if (!currentUser || currentUser.rol !== 'admin'){
+      throw new Error('Solo el administrador puede reemplazar la información.');
+    }
     onProgress('Eliminando información anterior…');
     const { error: delError } = await sb.rpc('iniciar_reemplazo', {
-      p_usuario: ADMIN_USER, p_password: ADMIN_PASS
+      p_usuario: currentUser.usuario, p_password: currentUser.password
     });
     if (delError) throw delError;
 
@@ -835,15 +943,12 @@
     for (let i = 0; i < total; i += batchSize){
       const batch = rows.slice(i, i + batchSize).map(internalToDbRow);
       const { error: insError } = await sb.rpc('insertar_lote', {
-        p_usuario: ADMIN_USER, p_password: ADMIN_PASS, p_rows: batch
+        p_usuario: currentUser.usuario, p_password: currentUser.password, p_rows: batch
       });
       if (insError) throw insError;
       onProgress('Subiendo datos… ' + Math.min(i + batchSize, total) + ' / ' + total);
     }
   }
-
-  // Al abrir la página, intentar cargar lo que ya haya guardado en Supabase.
-  loadFromSupabase();
 
   function parseWorkbook(wb){
     const out = [];
