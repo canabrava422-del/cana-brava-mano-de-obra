@@ -9,7 +9,6 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --paper:#F6F4FC;
@@ -357,23 +356,7 @@
 </head>
 <body>
 
-<div id="loginScreen" class="login-screen">
-  <div class="login-card">
-    <img class="login-logo" id="loginLogo" src="" alt="Caña Brava">
-    <h1>Reporte Gerencial de Mano de Obra</h1>
-    <p class="login-sub">Ingresa con tu cuenta para ver el dashboard.</p>
-    <form id="loginForm">
-      <label class="login-label" for="loginUsername">Usuario</label>
-      <input class="login-input" type="text" id="loginUsername" autocomplete="username" autocapitalize="none" spellcheck="false" required>
-      <label class="login-label" for="loginPassword">Contraseña</label>
-      <input class="login-input" type="password" id="loginPassword" autocomplete="current-password" required>
-      <button class="btn btn-primary login-btn" type="submit" id="loginBtn">Ingresar</button>
-      <p class="login-error" id="loginError"></p>
-    </form>
-  </div>
-</div>
-
-<div id="appRoot" style="display:none;">
+<div id="appRoot">
 
 <header class="top">
   <div class="top-inner">
@@ -386,11 +369,6 @@
     <div class="top-meta">
       <div class="file-chip"><span class="dot"></span><span id="fileChipText">Sin datos cargados</span></div>
       <span id="lastUpdate"></span>
-      <div class="user-chip">
-        <span id="userRoleBadge" class="role-badge"></span>
-        <span id="userEmailText"></span>
-        <button id="logoutBtn" class="logout-btn" type="button">Salir</button>
-      </div>
     </div>
   </div>
 </header>
@@ -634,7 +612,7 @@
     </div>
   </div>
 
-  <footer class="page-footer">Reporte generado a partir de la información almacenada en Supabase · Caña Brava S.A.C.</footer>
+  <footer class="page-footer">Reporte generado localmente en el navegador a partir del archivo Excel cargado · Caña Brava S.A.C.</footer>
 </div>
 
 </div>
@@ -642,18 +620,6 @@
 <script>
 (function(){
   'use strict';
-
-  /* ============================================================
-     SUPABASE CONFIG
-     Reemplaza estos dos valores con los de tu proyecto Supabase
-     (Project Settings → API → Project URL / anon public key).
-  ============================================================ */
-  const SUPABASE_URL = 'https://vokrdrfhhvrofmyfbuqo.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZva3JkcmZoaHZyb2ZteWZidXFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMTA2NzQsImV4cCI6MjA5Njg4NjY3NH0.8qaG-HIbR46cB3GVFsTU9jvay8jsHcwjLsLRTKH5hDM';
-  const TABLE_NAME = 'labor_rows';
-  const PAGE_SIZE = 1000;
-
-  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
   /* ============================================================
      STATE
@@ -689,149 +655,7 @@
   };
 
   /* ============================================================
-     AUTH — desactivado temporalmente (se retomará más adelante).
-     El dashboard se muestra directo, sin pedir usuario/contraseña.
-     Las funciones de reemplazo de datos igual exigen credenciales de
-     administrador (definidas aquí) porque así están protegidas en Supabase.
-  ============================================================ */
-  const loginScreen = document.getElementById('loginScreen');
-  const appRoot = document.getElementById('appRoot');
-  const userRoleBadge = document.getElementById('userRoleBadge');
-  const userEmailText = document.getElementById('userEmailText');
-  const logoutBtn = document.getElementById('logoutBtn');
-
-  // Credenciales de administrador usadas internamente para poder reemplazar
-  // los datos mientras el login está desactivado. Cuando se reactive el login,
-  // esto se reemplaza por lo que escriba la persona en el formulario.
-  const currentUser = { usuario: 'admin', password: 'reportemg', rol: 'admin', nombre: 'Administrador' };
-
-  state.role = currentUser.rol;
-  state.userEmail = currentUser.usuario;
-  if (userEmailText) userEmailText.textContent = currentUser.nombre;
-  if (userRoleBadge){
-    userRoleBadge.textContent = 'Administrador';
-    userRoleBadge.className = 'role-badge admin';
-  }
-  if (logoutBtn) logoutBtn.style.display = 'none';
-
-  const adminUploadWrap = document.getElementById('adminUploadWrap');
-  if (adminUploadWrap) adminUploadWrap.style.display = 'block';
-
-  function updateEmptyStateCopy(){
-    const emptyStateEl = document.getElementById('emptyState');
-    if (!emptyStateEl) return;
-    const p = emptyStateEl.querySelector('p');
-    p.innerHTML = 'Sube el archivo <b>base_de_datos_mano_de_obra.xlsx</b> para generar automáticamente los indicadores, comparativos PB / PY / Real y el detalle por EQ‑TR. Cada vez que reemplaces el archivo, se sustituye por completo la información anterior en Supabase.';
-  }
-  updateEmptyStateCopy();
-
-  if (loginScreen) loginScreen.style.display = 'none';
-  if (appRoot) appRoot.style.display = 'block';
-
-  (async function initApp(){
-    setStatus('Cargando datos desde Supabase…');
-    await loadFromSupabase();
-  })();
-
-  /* ============================================================
-     SUPABASE DATA LOAD / REPLACE
-  ============================================================ */
-  function dbRowToInternal(row){
-    return {
-      eqtr: row.eqtr,
-      tabla: row.tabla,
-      grp: row.grp,
-      grupo: row.grupo || 'Sin grupo',
-      act: row.act,
-      actividad: row.actividad || 'Sin actividad',
-      macrofundo: row.macrofundo || 'Sin macrofundo',
-      fundo: row.fundo || '',
-      jornales: Number(row.jornales_val) || 0,
-      anho: row.anho,
-      mes: Number(row.mes) || 0,
-      real: Number(row.real_val) || 0,
-      py: Number(row.py_val) || 0,
-      pb: Number(row.pb_val) || 0,
-      usuario: row.usuario || '',
-      jefatura: row.jefatura || '',
-      sheet: row.sheet_name
-    };
-  }
-
-  function internalToDbRow(r){
-    return {
-      eqtr: r.eqtr, tabla: r.tabla, grp: r.grp, grupo: r.grupo, act: r.act,
-      actividad: r.actividad, macrofundo: r.macrofundo, fundo: r.fundo,
-      jornales_val: r.jornales, anho: r.anho, mes: r.mes,
-      real_val: r.real, py_val: r.py, pb_val: r.pb,
-      usuario: r.usuario, jefatura: r.jefatura, sheet_name: r.sheet
-    };
-  }
-
-  async function loadFromSupabase(){
-    try {
-      let all = [];
-      let from = 0;
-      while (true){
-        const to = from + PAGE_SIZE - 1;
-        const { data, error } = await sb.from(TABLE_NAME).select('*').range(from, to).order('id', { ascending: true });
-        if (error) throw error;
-        if (!data || data.length === 0) break;
-        all = all.concat(data);
-        if (data.length < PAGE_SIZE) break;
-        from += PAGE_SIZE;
-      }
-
-      state.rows = all.map(dbRowToInternal);
-      state.fileName = all.length ? 'Datos cargados en Supabase' : '';
-      state.sheetCount = 0;
-      if (all.length){
-        const maxDate = all.reduce((acc, r) => {
-          const d = r.uploaded_at ? new Date(r.uploaded_at) : null;
-          return (d && (!acc || d > acc)) ? d : acc;
-        }, null);
-        state.lastUpdatedAt = maxDate;
-      }
-
-      if (state.rows.length === 0){
-        document.getElementById('emptyState').style.display = 'flex';
-        document.getElementById('dashboardContent').classList.remove('show');
-        setStatus('No hay datos cargados todavía.', null);
-        return;
-      }
-
-      onDataLoaded();
-      setStatus('Datos cargados: ' + fmt.format(state.rows.length) + ' filas.', 'ok');
-    } catch (err){
-      console.error(err);
-      setStatus('No se pudo cargar la información desde Supabase. (' + err.message + ')', 'warn');
-    }
-  }
-
-  async function replaceDataInSupabase(rows, onProgress){
-    // 1) Borrar todo lo anterior (la función valida usuario/contraseña de nuevo, por seguridad)
-    onProgress('Eliminando información anterior…');
-    const { error: delError } = await sb.rpc('iniciar_reemplazo', {
-      p_usuario: currentUser.usuario, p_password: currentUser.password
-    });
-    if (delError) throw delError;
-
-    // 2) Insertar en lotes
-    const batchSize = 500;
-    const total = rows.length;
-    for (let i = 0; i < total; i += batchSize){
-      const batch = rows.slice(i, i + batchSize).map(internalToDbRow);
-      const { error: insError } = await sb.rpc('insertar_lote', {
-        p_usuario: currentUser.usuario, p_password: currentUser.password, p_rows: batch
-      });
-      if (insError) throw insError;
-      onProgress('Subiendo datos… ' + Math.min(i + batchSize, total) + ' / ' + total);
-    }
-  }
-
-
-  /* ============================================================
-     FILE HANDLING (solo administrador)
+     FILE HANDLING
   ============================================================ */
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('fileInput');
@@ -872,7 +696,7 @@
     }
     setStatus('Leyendo y combinando hojas del archivo…');
     const reader = new FileReader();
-    reader.onload = async function(e){
+    reader.onload = function(e){
       try {
         const data = new Uint8Array(e.target.result);
         const wb = XLSX.read(data, { type: 'array' });
@@ -881,21 +705,15 @@
           setStatus('No se encontraron filas válidas (columna "EQ-TR") en ninguna hoja.', 'warn');
           return;
         }
-
-        btnUpload.disabled = true;
-        await replaceDataInSupabase(rows, (msg) => setStatus(msg));
-
         state.rows = rows;
         state.fileName = file.name;
         state.sheetCount = wb.SheetNames.length;
         state.lastUpdatedAt = new Date();
         onDataLoaded();
-        setStatus('Listo: se reemplazó la información anterior con ' + fmt.format(rows.length) + ' filas combinadas de ' + wb.SheetNames.length + ' hoja(s). Ya está disponible para todos los usuarios.', 'ok');
+        setStatus('Archivo procesado: ' + fmt.format(rows.length) + ' filas combinadas de ' + wb.SheetNames.length + ' hoja(s).', 'ok');
       } catch(err){
         console.error(err);
-        setStatus('No se pudo procesar o subir el archivo a Supabase. Verifica el formato y tu conexión. (' + err.message + ')', 'warn');
-      } finally {
-        btnUpload.disabled = false;
+        setStatus('No se pudo leer el archivo. Verifica que mantenga el formato original. (' + err.message + ')', 'warn');
       }
     };
     reader.onerror = function(){ setStatus('Error al leer el archivo.', 'warn'); };
