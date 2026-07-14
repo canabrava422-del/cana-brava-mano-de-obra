@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --paper:#F6F4FC;
@@ -397,7 +398,7 @@
     <svg width="34" height="34" viewBox="0 0 24 24" fill="none"><path d="M4 19h16M6 19V9l3-3 3 3v10M12 19V6l3-3 3 3v13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </div>
   <h2>Aún no hay datos cargados</h2>
-  <p>Sube el archivo <b>base_de_datos_mano_de_obra.xlsx</b> para generar automáticamente los indicadores, comparativos PB / PY / Real y el detalle por EQ‑TR. Cada vez que reemplaces el archivo, el reporte se recalcula al instante.</p>
+  <p>Sube el archivo <b>base_de_datos_mano_de_obra.xlsx</b> para generar automáticamente los indicadores, comparativos PB / PY / Real y el detalle por EQ‑TR. Cada vez que reemplaces el archivo, se sustituye por completo la información anterior y queda disponible para cualquiera que abra este link.</p>
 </div>
 
 <div class="shell" id="dashboardContent">
@@ -612,7 +613,7 @@
     </div>
   </div>
 
-  <footer class="page-footer">Reporte generado localmente en el navegador a partir del archivo Excel cargado · Caña Brava S.A.C.</footer>
+  <footer class="page-footer">Reporte generado a partir de la información compartida en Supabase · Caña Brava S.A.C.</footer>
 </div>
 
 </div>
@@ -620,6 +621,22 @@
 <script>
 (function(){
   'use strict';
+
+  /* ============================================================
+     SUPABASE CONFIG
+  ============================================================ */
+  const SUPABASE_URL = 'https://vokrdrfhhvrofmyfbuqo.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZva3JkcmZoaHZyb2ZteWZidXFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMTA2NzQsImV4cCI6MjA5Njg4NjY3NH0.8qaG-HIbR46cB3GVFsTU9jvay8jsHcwjLsLRTKH5hDM';
+  const TABLE_NAME = 'labor_rows';
+  const PAGE_SIZE = 1000;
+  // Credenciales de administrador usadas internamente para poder reemplazar
+  // los datos (todavía no hay pantalla de login; se agregará después).
+  const ADMIN_USER = 'admin';
+  const ADMIN_PASS = 'reportemg';
+
+  const sb = (window.supabase && typeof window.supabase.createClient === 'function')
+    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
 
   /* ============================================================
      STATE
@@ -694,9 +711,13 @@
       setStatus('El archivo debe ser un Excel (.xlsx o .xls).', 'warn');
       return;
     }
+    if (!sb){
+      setStatus('No se pudo cargar la conexión con Supabase. Recarga la página e inténtalo de nuevo.', 'warn');
+      return;
+    }
     setStatus('Leyendo y combinando hojas del archivo…');
     const reader = new FileReader();
-    reader.onload = function(e){
+    reader.onload = async function(e){
       try {
         const data = new Uint8Array(e.target.result);
         const wb = XLSX.read(data, { type: 'array' });
@@ -705,20 +726,124 @@
           setStatus('No se encontraron filas válidas (columna "EQ-TR") en ninguna hoja.', 'warn');
           return;
         }
+
+        btnUpload.disabled = true;
+        await replaceDataInSupabase(rows, (msg) => setStatus(msg));
+
         state.rows = rows;
         state.fileName = file.name;
         state.sheetCount = wb.SheetNames.length;
         state.lastUpdatedAt = new Date();
         onDataLoaded();
-        setStatus('Archivo procesado: ' + fmt.format(rows.length) + ' filas combinadas de ' + wb.SheetNames.length + ' hoja(s).', 'ok');
+        setStatus('Listo: se reemplazó la información anterior con ' + fmt.format(rows.length) + ' filas combinadas de ' + wb.SheetNames.length + ' hoja(s). Ya está disponible para todos los usuarios del link.', 'ok');
       } catch(err){
         console.error(err);
-        setStatus('No se pudo leer el archivo. Verifica que mantenga el formato original. (' + err.message + ')', 'warn');
+        setStatus('No se pudo procesar o subir el archivo a Supabase. (' + err.message + ')', 'warn');
+      } finally {
+        btnUpload.disabled = false;
       }
     };
     reader.onerror = function(){ setStatus('Error al leer el archivo.', 'warn'); };
     reader.readAsArrayBuffer(file);
   }
+
+  /* ============================================================
+     SUPABASE SYNC
+  ============================================================ */
+  function dbRowToInternal(row){
+    return {
+      eqtr: row.eqtr,
+      tabla: row.tabla,
+      grp: row.grp,
+      grupo: row.grupo || 'Sin grupo',
+      act: row.act,
+      actividad: row.actividad || 'Sin actividad',
+      macrofundo: row.macrofundo || 'Sin macrofundo',
+      fundo: row.fundo || '',
+      jornales: Number(row.jornales_val) || 0,
+      anho: row.anho,
+      mes: Number(row.mes) || 0,
+      real: Number(row.real_val) || 0,
+      py: Number(row.py_val) || 0,
+      pb: Number(row.pb_val) || 0,
+      usuario: row.usuario || '',
+      jefatura: row.jefatura || '',
+      sheet: row.sheet_name
+    };
+  }
+
+  function internalToDbRow(r){
+    return {
+      eqtr: r.eqtr, tabla: r.tabla, grp: r.grp, grupo: r.grupo, act: r.act,
+      actividad: r.actividad, macrofundo: r.macrofundo, fundo: r.fundo,
+      jornales_val: r.jornales, anho: r.anho, mes: r.mes,
+      real_val: r.real, py_val: r.py, pb_val: r.pb,
+      usuario: r.usuario, jefatura: r.jefatura, sheet_name: r.sheet
+    };
+  }
+
+  async function loadFromSupabase(){
+    if (!sb){
+      setStatus('No se pudo cargar la conexión con Supabase (la librería no cargó). Recarga la página.', 'warn');
+      return;
+    }
+    try {
+      setStatus('Cargando datos desde Supabase…');
+      let all = [];
+      let from = 0;
+      while (true){
+        const to = from + PAGE_SIZE - 1;
+        const { data, error } = await sb.from(TABLE_NAME).select('*').range(from, to).order('id', { ascending: true });
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        all = all.concat(data);
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+
+      if (all.length === 0){
+        setStatus('No hay datos cargados todavía. Sube el Excel para comenzar.', null);
+        return;
+      }
+
+      state.rows = all.map(dbRowToInternal);
+      state.fileName = 'Datos cargados en Supabase';
+      state.sheetCount = 0;
+      const maxDate = all.reduce((acc, r) => {
+        const d = r.uploaded_at ? new Date(r.uploaded_at) : null;
+        return (d && (!acc || d > acc)) ? d : acc;
+      }, null);
+      state.lastUpdatedAt = maxDate;
+
+      onDataLoaded();
+      setStatus('Datos cargados desde Supabase: ' + fmt.format(state.rows.length) + ' filas.', 'ok');
+    } catch (err){
+      console.error(err);
+      setStatus('No se pudo cargar la información desde Supabase. (' + err.message + ')', 'warn');
+    }
+  }
+
+  async function replaceDataInSupabase(rows, onProgress){
+    onProgress('Eliminando información anterior…');
+    const { error: delError } = await sb.rpc('iniciar_reemplazo', {
+      p_usuario: ADMIN_USER, p_password: ADMIN_PASS
+    });
+    if (delError) throw delError;
+
+    const batchSize = 500;
+    const total = rows.length;
+    for (let i = 0; i < total; i += batchSize){
+      const batch = rows.slice(i, i + batchSize).map(internalToDbRow);
+      const { error: insError } = await sb.rpc('insertar_lote', {
+        p_usuario: ADMIN_USER, p_password: ADMIN_PASS, p_rows: batch
+      });
+      if (insError) throw insError;
+      onProgress('Subiendo datos… ' + Math.min(i + batchSize, total) + ' / ' + total);
+    }
+  }
+
+  // Al abrir la página, intentar cargar lo que ya haya guardado en Supabase.
+  loadFromSupabase();
 
   function parseWorkbook(wb){
     const out = [];
