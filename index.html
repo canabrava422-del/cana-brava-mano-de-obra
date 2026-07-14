@@ -1046,11 +1046,15 @@
     const container = document.getElementById(containerId);
     const list = container.querySelector('[data-list]');
     const btn = container.querySelector('.msel-btn');
+    const panel = container.querySelector('.msel-panel');
     const badge = container.querySelector('.count-badge');
     const labelEl = container.querySelector('.msel-label');
     const fixedLabelEl = container.parentElement ? container.parentElement.querySelector('.msel-fixed-label') : null;
     const baseLabel = fixedLabelEl ? fixedLabelEl.textContent : filterKey;
     const searchInput = container.querySelector('[data-search]');
+
+    if (panel) panel.addEventListener('click', (e) => e.stopPropagation());
+    if (panel) panel.addEventListener('mousedown', (e) => e.stopPropagation());
 
     function paintList(filterText){
       list.innerHTML = '';
